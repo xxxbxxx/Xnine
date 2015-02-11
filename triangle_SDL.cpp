@@ -9,8 +9,8 @@
 #include "SDL_nine.h"
 
 // define the screen resolution
-#define SCREEN_WIDTH 800
-#define SCREEN_HEIGHT 600
+#define SCREEN_WIDTH 1280
+#define SCREEN_HEIGHT 720
 
 #define ERR(...)    fprintf(stderr, __VA_ARGS__)
 
@@ -97,24 +97,24 @@ static void fillin_present_parameters(SDL_Window* Window, int w, int h, bool ful
     HWND FakeWnd= (HWND)Window;
 
     memset(&mode, 0, sizeof(mode));
-    mode.Size                = sizeof(mode);
-    mode.Width                = w;
-    mode.Height                = h;
-    mode.Format                = D3DFMT_UNKNOWN;
-    mode.RefreshRate        = 60;
-    mode.ScanLineOrdering    = D3DSCANLINEORDERING_UNKNOWN;
+    mode.Size                   = sizeof(mode);
+    mode.Width                  = w;
+    mode.Height                 = h;
+    mode.Format                 = D3DFMT_X8R8G8B8;
+    mode.RefreshRate            = 0;
+    mode.ScanLineOrdering       = D3DSCANLINEORDERING_UNKNOWN;
 
     memset(&d3dpp, 0, sizeof(d3dpp));
-    d3dpp.Windowed = !fullscreen;
-    d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    d3dpp.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
-    d3dpp.hDeviceWindow = FakeWnd;
-    d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
-    d3dpp.BackBufferWidth = w;
-    d3dpp.BackBufferHeight = h;
+    d3dpp.Windowed              = !fullscreen;
+    d3dpp.SwapEffect            = D3DSWAPEFFECT_DISCARD;
+    d3dpp.PresentationInterval  = D3DPRESENT_INTERVAL_IMMEDIATE;
+    d3dpp.hDeviceWindow         = FakeWnd;
+    d3dpp.BackBufferFormat      = D3DFMT_UNKNOWN;
+    d3dpp.BackBufferWidth       = w;
+    d3dpp.BackBufferHeight      = h;
 }
 
-static bool set_window_size(SDL_Window* Window, int w, int h, bool fullscreen)
+static bool set_window_size(SDL_Window* Window, int w, int h, bool fullscreen, int& actual_w, int& actual_h, bool& actual_fullscreen)
 {
     D3DDISPLAYMODEEX mode;
     D3DPRESENT_PARAMETERS d3dpp;
@@ -126,6 +126,9 @@ static bool set_window_size(SDL_Window* Window, int w, int h, bool fullscreen)
         return false;
     }
 
+    actual_w = d3dpp.BackBufferWidth;
+    actual_h = d3dpp.BackBufferHeight;
+    actual_fullscreen = !d3dpp.Windowed;
     return true;
 }
 
@@ -133,10 +136,11 @@ int main(int argc, char **argv)
 {
     bool fullscreen = false;
 
-    if (SDL_Init(0) != 0){
+    if (SDL_Init(SDL_INIT_VIDEO) != 0){
         ERR("SDL_Init\n");
         return 1;
     }
+
 
     SDL_Window* Window = SDL_CreateWindow("SDL Nine", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE );
     if (!Window) {
@@ -180,6 +184,11 @@ int main(int argc, char **argv)
     //While application is running
     while (!quit)
     {
+        bool refresh = false;
+        int desired_width;
+        int desired_height;
+        bool desired_fullscreen;
+
         //Handle events on queue
         while (SDL_PollEvent(&e) != 0)
         {
@@ -191,24 +200,34 @@ int main(int argc, char **argv)
             else if (e.type == SDL_WINDOWEVENT && e.window.windowID == MainWindowID)
             {
                 switch (e.window.event) {
-                case SDL_WINDOWEVENT_SIZE_CHANGED:
+                case SDL_WINDOWEVENT_RESIZED:
                     {
-                        int width = e.window.data1;
-                        int height = e.window.data2;
-
-                        bool ok = set_window_size(Window, width, height, fullscreen);
-                        if (ok)
-                            load_triangle(width, height, v_buffer);
+                        refresh = true;
+                        desired_width = e.window.data1;
+                        desired_height = e.window.data2;
+                        desired_fullscreen = fullscreen;
                     } break;
                 }
             }
             else if (e.type == SDL_KEYDOWN && e.window.windowID == MainWindowID && e.key.keysym.sym == SDLK_F11 && e.key.state == SDL_PRESSED)
             {
-                fullscreen = !fullscreen;
-                bool ok = set_window_size(Window, SCREEN_WIDTH, SCREEN_HEIGHT, fullscreen);
-                if (ok)
-                    load_triangle(SCREEN_WIDTH, SCREEN_HEIGHT, v_buffer);
+                refresh = true;
+                // try to transfert the resolution window<->fullscreen
+                SDL_GetWindowSize(Window, &desired_width, &desired_height);
+                desired_fullscreen = !fullscreen;
             }
+        }
+
+        if (refresh) {
+            int actual_width, actual_height;
+            bool actual_fullscreen;
+            bool ok = set_window_size(Window, desired_width, desired_height, desired_fullscreen,
+                                                actual_width, actual_height, actual_fullscreen);
+            if (ok) {
+                fullscreen = actual_fullscreen;
+                load_triangle(actual_width, actual_height, v_buffer);
+            }
+
         }
 
         //Render quad

@@ -24,7 +24,7 @@
 
 // ----------- utils funcs / stubs ------------------------
 #define TRACE(...)
-#define FIXME(...)   fprintf(stderr, __VA_ARGS__)
+#define FIXME(...)  fprintf(stderr, __VA_ARGS__)
 #define WARN(...)   fprintf(stderr, __VA_ARGS__)
 #define ERR(...)    fprintf(stderr, __VA_ARGS__)
 
@@ -93,10 +93,6 @@ static const Uint32 ConvertToSDL(D3DFORMAT format)
 #include <sys/ioctl.h>
 #include <errno.h>
 #include <fcntl.h>
-
-/*#ifndef D3DPRESENT_DONOTWAIT
-#define D3DPRESENT_DONOTWAIT      0x00000001
-#endif*/
 
 #if D3DADAPTER9_WITHDRI2
 static int is_dri2_fallback = 0;
@@ -180,9 +176,8 @@ DRI3Present_QueryInterface( struct DRI3Present *This,
 }
 
 static void
-DRI3Present_ChangePresentParameters( struct DRI3Present *This,
-                                    D3DPRESENT_PARAMETERS *params,
-                                    BOOL first_time);
+DRI3Present_ChangePresentParameters(struct DRI3Present *This,
+                                    D3DPRESENT_PARAMETERS *params);
 
 static HRESULT WINAPI
 DRI3Present_SetPresentParameters( struct DRI3Present *This,
@@ -194,9 +189,15 @@ DRI3Present_SetPresentParameters( struct DRI3Present *This,
         return D3DERR_INVALIDCALL;
     }
 
+    TRACE("SetPresentParameters: %dx%d@%dHz %s, format=%d\n",
+            pPresentationParameters->BackBufferWidth, pPresentationParameters->BackBufferHeight, pPresentationParameters->FullScreen_RefreshRateInHz,
+            pPresentationParameters->Windowed?"windowed":"fullscreen",
+            pPresentationParameters->BackBufferFormat );
+
     if (pPresentationParameters->Windowed) {
         SDL_SetWindowFullscreen(This->sdl_win, FALSE);
-        DRI3Present_ChangePresentParameters(This, pPresentationParameters, FALSE);
+        SDL_SetWindowSize(This->sdl_win, pPresentationParameters->BackBufferWidth, pPresentationParameters->BackBufferHeight);
+        DRI3Present_ChangePresentParameters(This, pPresentationParameters);
 
     }
     else {
@@ -215,8 +216,8 @@ DRI3Present_SetPresentParameters( struct DRI3Present *This,
         //  so that back buffer and front buffer formats will be identical (to eliminate the need for color conversion)."
         Uint32 preferred_format_for_backbuffer = ConvertToSDL(pPresentationParameters->BackBufferFormat);
 
-        target.w = pFullscreenDisplayMode->Height;
-        target.h = pFullscreenDisplayMode->Width;
+        target.w = pFullscreenDisplayMode->Width;
+        target.h = pFullscreenDisplayMode->Height;
         target.refresh_rate = pFullscreenDisplayMode->RefreshRate;
         if (preferred_format_for_backbuffer != SDL_PIXELFORMAT_UNKNOWN)
             target.format = preferred_format_for_backbuffer;
@@ -224,19 +225,17 @@ DRI3Present_SetPresentParameters( struct DRI3Present *This,
             target.format = ConvertToSDL(pFullscreenDisplayMode->Format);
 
         SDL_DisplayMode* mode = NULL;
-        if (FALSE) {
-            /*
-             * this doesn't seem to be a good idea:
-             *       it returns different mode even when the request mode exits and works...
-             */
-            int Adapter = 0;
-            mode = SDL_GetClosestDisplayMode(Adapter, &target, &closest);
-            if (!mode) {
-                WARN("Could not find requested fullscreen display mode (%dx%d %dHz, format = %d).\n", pFullscreenDisplayMode->Width, pFullscreenDisplayMode->Height, pFullscreenDisplayMode->RefreshRate, pFullscreenDisplayMode->Format);
-            }
-        }
-        else {
-            mode = &target;
+
+        int Adapter = 0;
+        mode = SDL_GetClosestDisplayMode(Adapter, &target, &closest);
+
+        if (!mode) {
+            // hint: don't forget SDL_Init(SDL_INIT_VIDEO)...
+            ERR("Could not find requested fullscreen display mode (%dx%d %dHz, format = %d): %s\n",
+                    pFullscreenDisplayMode->Width, pFullscreenDisplayMode->Height, pFullscreenDisplayMode->RefreshRate,
+                    pFullscreenDisplayMode->Format,
+                    SDL_GetError() );
+            mode = &target;     // try anyway..
         }
 
         int err = SDL_SetWindowDisplayMode(This->sdl_win, mode);
@@ -251,7 +250,7 @@ DRI3Present_SetPresentParameters( struct DRI3Present *This,
             return D3DERR_INVALIDCALL;
         }
 
-        DRI3Present_ChangePresentParameters(This, pPresentationParameters, FALSE);
+        DRI3Present_ChangePresentParameters(This, pPresentationParameters);
     }
     return D3D_OK;
 }
@@ -478,19 +477,40 @@ static ID3DPresentVtbl DRI3Present_vtable = {
 
 static void
 DRI3Present_ChangePresentParameters( struct DRI3Present *This,
-                                    D3DPRESENT_PARAMETERS *params,
-                                    BOOL first_time)
+                                    D3DPRESENT_PARAMETERS *params)
 {
-    (void) first_time; /* will be used to manage screen res if windowed mode change */
+    int err;
 
     if (params->hDeviceWindow && params->hDeviceWindow != This->sdl_win) {
         WARN("Changing hDeviceWindow not supported\n");
     }
 
+    Uint32 Flags = SDL_GetWindowFlags(This->sdl_win);
     int w,h;
     SDL_GetWindowSize(This->sdl_win, &w, &h);
+    Uint32 format = SDL_GetWindowPixelFormat(This->sdl_win);
     params->BackBufferWidth = w;
     params->BackBufferHeight = h;
+    params->Windowed = !(Flags & SDL_WINDOW_FULLSCREEN);
+
+    if (params->Windowed) {
+        params->BackBufferFormat = ConvertFromSDL(format);
+    } else {
+        SDL_DisplayMode displaymode;
+        err = SDL_GetWindowDisplayMode(This->sdl_win, &displaymode);       // I guess this is the same has SDL_GetCurrentDisplayMode(curadpater)
+        if (err == 0) {
+            params->BackBufferFormat = ConvertFromSDL(displaymode.format);
+            params->FullScreen_RefreshRateInHz = displaymode.refresh_rate;
+        } else {
+            ERR("SDL_GetWindowDisplayMode failed: %s\n", SDL_GetError());
+            params->BackBufferFormat = ConvertFromSDL(format);
+        }
+    }
+
+    TRACE("ChangePresentParameters: %dx%d@%dHz %s, format=%d\n",
+            params->BackBufferWidth, params->BackBufferHeight, params->FullScreen_RefreshRateInHz,
+            params->Windowed?"windowed":"fullscreen",
+            params->BackBufferFormat );
 
     This->params = *params;
 }
@@ -526,7 +546,7 @@ DRI3Present_new( SDL_Window* sdl_win,
     This->x11_display = info.info.x11.display;
     This->x11_window = info.info.x11.window;
 
-    DRI3Present_ChangePresentParameters(This, params, TRUE);
+    DRI3Present_ChangePresentParameters(This, params);
 
     PRESENTInit(info.info.x11.display, &(This->present_priv));
 #if D3DADAPTER9_WITHDRI2
