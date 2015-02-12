@@ -13,6 +13,7 @@
 #define SCREEN_HEIGHT 720
 
 #define ERR(...)    fprintf(stderr, __VA_ARGS__)
+#define TRACE(...)    fprintf(stderr, __VA_ARGS__)
 
 // global declarations
 LPDIRECT3D9EX d3d;    // the pointer to our Direct3D interface
@@ -101,7 +102,7 @@ static void fillin_present_parameters(SDL_Window* Window, int w, int h, bool ful
     mode.Width                  = w;
     mode.Height                 = h;
     mode.Format                 = D3DFMT_X8R8G8B8;
-    mode.RefreshRate            = 0;
+    mode.RefreshRate            = 60;
     mode.ScanLineOrdering       = D3DSCANLINEORDERING_UNKNOWN;
 
     memset(&d3dpp, 0, sizeof(d3dpp));
@@ -141,6 +142,22 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    {
+        TRACE("Available modes:\n");
+        int Adapter = 0;
+        int NumModes = SDL_GetNumDisplayModes(Adapter);
+        int i;
+        for (i=0;i<NumModes;i++) {
+            SDL_DisplayMode mode;
+            int err = SDL_GetDisplayMode(Adapter, i, &mode);
+            if (err < 0) {
+                ERR("SDL_GetDisplayMode returned an error: %s\n", SDL_GetError());
+                continue;
+            }
+
+            TRACE(" %dx%d@%dHz, format=%d (%dbpp)\n", mode.w, mode.h, mode.refresh_rate, mode.format, SDL_BITSPERPIXEL(mode.format));
+        }
+    }
 
     SDL_Window* Window = SDL_CreateWindow("SDL Nine", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE );
     if (!Window) {
@@ -227,7 +244,6 @@ int main(int argc, char **argv)
                 fullscreen = actual_fullscreen;
                 load_triangle(actual_width, actual_height, v_buffer);
             }
-
         }
 
         //Render quad
